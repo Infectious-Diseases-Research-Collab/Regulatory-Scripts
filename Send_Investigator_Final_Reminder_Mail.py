@@ -3,6 +3,7 @@ import urllib
 import pyodbc
 from datetime import datetime
 from email.message import EmailMessage
+import traceback
 import pandas as pd
 import sqlalchemy as db
 from cryptography.fernet import Fernet
@@ -37,6 +38,7 @@ CERTIFICATIONS = [
 
 
 def write_log(message):
+    print(message)
     with open("regulatory.log", "a") as file_object:
         file_object.write("\n" + message)
 
@@ -117,26 +119,38 @@ params = urllib.parse.quote_plus(
 )
 
 engine = db.create_engine("mssql+pyodbc:///?odbc_connect={}".format(params))
-conn = pyodbc.connect(
-    "Driver={SQL Server};"
-    + "SERVER="
-    + server
-    + ";"
-    + "DATABASE="
-    + database
-    + ";"
-    + "Trusted_Connection=yes;"
-)
-cursor = conn.cursor()
-
-password = get_mail_password()
-smtp_server = smtplib.SMTP_SSL("smtp.dreamhost.com", 465)
-smtp_server.login(sender_mail, password)
-
+conn = None
+cursor = None
+smtp_server = None
 emails_to_send = 0
 
 try:
+    write_log(
+        "INVESTIGATOR FINAL PROCESS STARTED on "
+        + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        + f", days_before_expiry={DAYS_BEFORE_EXPIRY}"
+    )
+
+    conn = pyodbc.connect(
+        "Driver={SQL Server};"
+        + "SERVER="
+        + server
+        + ";"
+        + "DATABASE="
+        + database
+        + ";"
+        + "Trusted_Connection=yes;"
+    )
+    cursor = conn.cursor()
+    write_log("Database connection established.")
+
+    password = get_mail_password()
+    smtp_server = smtplib.SMTP_SSL("smtp.dreamhost.com", 465)
+    smtp_server.login(sender_mail, password)
+    write_log("SMTP login successful.")
+
     for cert in CERTIFICATIONS:
+        write_log(f"Checking {cert['name']} expiries...")
         df = pd.read_sql_query(
             sql=f"""
                 SELECT investigator_id, name, email_address,
@@ -151,9 +165,13 @@ try:
             """,
             con=engine,
         )
+        write_log(f"{cert['name']} rows to email: {len(df)}")
 
         for _, row in df.iterrows():
             try:
+                write_log(
+                    f"Sending final {cert['name']} reminder to investigator_id={row['investigator_id']}, email={row['email_address']}"
+                )
                 send_cert_email(
                     smtp_server=smtp_server,
                     name=row["name"],
@@ -166,8 +184,11 @@ try:
                     int(row["investigator_id"]),
                 )
                 conn.commit()
+                write_log(
+                    f"Updated investigator_id={row['investigator_id']} set {cert['sent_column']}=1"
+                )
                 emails_to_send += 1
-            except Exception:
+            except Exception as ex:
                 write_log(
                     "INVESTIGATOR FINAL EMAIL FAILED on "
                     + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -175,17 +196,26 @@ try:
                     + str(row["name"])
                     + ", cert: "
                     + cert["name"]
+                    + ", error: "
+                    + str(ex)
                 )
+                write_log(traceback.format_exc())
 
     if emails_to_send == 0:
+        write_log("No final reminder emails found. Sending ping email.")
         send_ping_email(smtp_server)
-except Exception:
+except Exception as ex:
     write_log(
         "INVESTIGATOR FINAL PROCESS FAILED on "
         + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        + ", error: "
+        + str(ex)
     )
+    write_log(traceback.format_exc())
 finally:
-    smtp_server.quit()
-    cursor.close()
-    conn.close()
-
+    if smtp_server is not None:
+        smtp_server.quit()
+    if cursor is not None:
+        cursor.close()
+    if conn is not None:
+        conn.close()
