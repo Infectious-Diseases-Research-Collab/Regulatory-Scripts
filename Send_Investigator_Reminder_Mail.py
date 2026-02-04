@@ -9,7 +9,7 @@ import sqlalchemy as db
 from cryptography.fernet import Fernet
 
 server = "PONTIAC"
-database = "Regulatory"
+database = "reg_website"
 
 sender_mail = "idrcreg@idrc-uganda.org"
 admin_email = "glavoy@idrc-uganda.org"
