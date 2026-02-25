@@ -8,7 +8,7 @@ import sqlalchemy as db
 from cryptography.fernet import Fernet
 
 server = 'PONTIAC'
-database = 'Regulatory'
+database = 'reg_website'
 
 params = urllib.parse.quote_plus("DRIVER={SQL Server};"
                                  "SERVER="+server+";"
@@ -28,12 +28,12 @@ cursor = conn.cursor()
 # SQLAlCHEMY ORM QUERY TO FETCH ALL RECORDS
 df = pd.read_sql_query(
     sql = """
-    SELECT projectbodies.project, projectbodies.regbody, projectbodies.expirydate, projectemails.emailaddress
-    FROM projectbodies INNER JOIN
-                             projectemails ON projectbodies.project = projectemails.project
-    WHERE datediff(d, getdate(), projectbodies.expirydate) <= 61
-            AND projectbodies.needsattentionsent = 0 AND projectbodies.expirystatus = 'OK'
-    ORDER BY projectbodies.expirydate, projectbodies.project, projectbodies.regbody
+    SELECT irb_submissions.project, irb_submissions.regbody, irb_submissions.expiry_date, projectemails.emailaddress
+    FROM irb_submissions INNER JOIN
+                             projectemails ON irb_submissions.project = projectemails.project
+    WHERE datediff(d, getdate(), irb_submissions.expiry_date) <= 61
+            AND irb_submissions.needsattentionsent = 0 AND irb_submissions.expirystatus = 'OK'
+    ORDER BY irb_submissions.expiry_date, irb_submissions.project, irb_submissions.regbody
     """,
     con = engine
     )
@@ -63,21 +63,18 @@ with open(cred_filename,'r') as cred_in:
         password = f.decrypt(config['Password'].encode()).decode()
 
 
-def sendmail(project, regbody, expirydate):
-    emails = df[(df["project"]==project) & (df["regbody"]==regbody) & (df["expirydate"]==expirydate)]
+def sendmail(project, regbody, expiry_date):
+    emails = df[(df["project"]==project) & (df["regbody"]==regbody) & (df["expiry_date"]==expiry_date)]
     to_list = emails['emailaddress'].tolist()
     to_list.append("glavoy@idrc-uganda.org")
-    
-    # delete this later
-    # to_list = ['glavoy@idrc-uganda.org', 'geofflavoy@gmail.com', 'idrcreg@idrc-uganda.org']
-    
+        
     sender_mail = 'idrcreg@idrc-uganda.org'
 
     subject = 'IRB Renewal Requires Your Attention'
 
     body = """Dear PIs and Study Coordinator:
 
-This is a reminder from the IDRC Regulatory Core team that your study: '""" + project + """' is due for annual renewal submission at: """ +  regbody + """. The current approval for this study expires on: """ + expirydate + """.
+This is a reminder from the IDRC Regulatory Core team that your study: '""" + project + """' is due for annual renewal submission at: """ +  regbody + """. The current approval for this study expires on: """ + expiry_date + """.
 
 Please send the annual report to the IDRC regulatory team as soon as possible to ensure that your study\'s approval will not lapse. If you require a copy of last year\'s submission, please contact Faith Kagoya at fkagoya@idrc-uganda.org.
 
@@ -100,13 +97,13 @@ IDRC Reg Team - Bridget, Faith and Emma
         smtp_server.login(sender_mail, password)
         smtp_server.send_message(msg)
         # update database
-        cursor.execute("update projectbodies set expirystatus = 'Needs Attention', needsattentionsent = 1 where needsattentionsent = 0 and datediff(d, getdate(), expirydate) <= 61 and expirystatus = 'OK'")
+        cursor.execute("update irb_submissions set expirystatus = 'Needs Attention', needsattentionsent = 1 where needsattentionsent = 0 and datediff(d, getdate(), expiry_date) <= 61 and expirystatus = 'OK'")
         conn.commit()
         cursor.close()
         conn.close()
         # Write to log file
         file_object = open('regulatory.log', 'a')
-        file_object.write('\nEMAIL SENT on ' + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ', To: '+ ';'.join(to_list) + ', project: ' + project + ', regbody: ' + regbody + ', expirydate: ' + expirydate)
+        file_object.write('\nEMAIL SENT on ' + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ', To: '+ ';'.join(to_list) + ', project: ' + project + ', regbody: ' + regbody + ', expiry_date: ' + expiry_date)
         file_object.close()
     except Exception as ex: 
         # Write to log file
@@ -155,6 +152,6 @@ if study_df.empty:
     sendPingMail()
 else:
     for index, row in study_df.iterrows():
-        sendmail(row['project'], row['regbody'], row['expirydate'])
+        sendmail(row['project'], row['regbody'], row['expiry_date'])
 
 
